@@ -53,3 +53,7 @@ The aim is not to claim that implementations are automatically psychometrically 
 See [template.md](template.md) and the [specs](specs/) folder for examples.
 
 See the [implementation](implementation/) folder for sample tasks that implement the neutral spec.
+
+https://nelsonroque.github.io/neutral/implementations/stroop-canvas.html
+
+https://nelsonroque.github.io/neutral/implementations/trail-making-b-canvas.html
