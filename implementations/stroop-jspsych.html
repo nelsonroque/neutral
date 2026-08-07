@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Neutral Stroop — jsPsych Implementation</title>
+  <script src="https://unpkg.com/jspsych@8.3.0"></script>
+  <script src="https://unpkg.com/@jspsych/plugin-html-keyboard-response@2.2.0"></script>
+  <script src="https://unpkg.com/@jspsych/plugin-html-button-response@2.2.0"></script>
+  <link href="https://unpkg.com/jspsych@8.3.0/css/jspsych.css" rel="stylesheet" type="text/css" />
+  <style>
+    :root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:#172033; background:#eef2f7; }
+    * { box-sizing:border-box; }
+    html, body { margin:0; width:100%; min-height:100%; }
+    body { min-height:100dvh; background:#eef2f7; }
+    #jspsych-target { min-height:100dvh; display:grid; place-items:center; padding:clamp(12px,2.5vw,28px); }
+    .neutral-card, .stroop-wrap { width:min(920px,calc(100vw - 32px)); min-height:min(620px,calc(100dvh - 56px)); background:#fff; border:1px solid rgba(23,32,51,.1); border-radius:24px; box-shadow:0 18px 55px rgba(23,32,51,.12); }
+    .neutral-card { padding:clamp(28px,5vw,64px); display:flex; flex-direction:column; align-items:center; justify-content:center; }
+    .neutral-title { font-size:clamp(30px,4vw,44px); line-height:1.1; margin:0 0 28px; font-weight:780; letter-spacing:-.025em; }
+    .neutral-copy { max-width:720px; font-size:clamp(18px,2vw,22px); line-height:1.55; margin:0 auto 24px; }
+    .neutral-keys { display:grid; grid-template-columns:repeat(4,minmax(110px,1fr)); gap:12px; width:min(650px,100%); margin:30px auto; }
+    .neutral-key { padding:14px 12px; border-radius:14px; background:#f8fafc; border:1px solid rgba(23,32,51,.12); font-weight:750; }
+    .neutral-key kbd { display:inline-grid; place-items:center; min-width:30px; min-height:30px; margin-right:6px; padding:2px 8px; border:1px solid #cad2de; border-bottom-width:3px; border-radius:7px; background:#fff; font:inherit; }
+    .stroop-wrap { display:grid; grid-template-rows:minmax(0,1fr) auto; overflow:hidden; }
+    .stroop-stage { min-height:420px; display:grid; place-items:center; padding:30px; }
+    .stroop-word { font-size:clamp(58px,10vw,96px); line-height:1; font-weight:800; letter-spacing:-.03em; user-select:none; }
+    .stroop-fixation { font-size:64px; font-weight:500; }
+    .stroop-response-bar { border-top:1px solid rgba(23,32,51,.08); background:#f8fafc; padding:14px; }
+    .stroop-response-bar .jspsych-html-button-response-button { display:inline-block; margin:6px; }
+    .jspsych-btn { min-width:120px; min-height:50px; border-radius:12px; border:1px solid rgba(23,32,51,.16); background:#fff; color:#172033; font:inherit; font-size:16px; font-weight:750; cursor:pointer; box-shadow:0 2px 7px rgba(23,32,51,.06); }
+    .jspsych-btn:hover { background:#f3f6fa; }
+    .neutral-feedback { font-size:clamp(38px,7vw,58px); font-weight:800; }
+    .neutral-meta { margin-top:18px; font-size:14px; color:#687386; }
+    @media (max-width:640px) {
+      #jspsych-target { padding:0; }
+      .neutral-card, .stroop-wrap { width:100vw; min-height:100dvh; border-radius:0; border:0; }
+      .neutral-keys { grid-template-columns:repeat(2,1fr); }
+      .stroop-stage { min-height:55dvh; }
+      .stroop-response-bar .jspsych-html-button-response-button { width:calc(50% - 16px); }
+      .jspsych-btn { width:100%; min-width:0; }
+    }
+  </style>
+</head>
+<body>
+<div id="jspsych-target"></div>
+<script>
+(() => {
+  const SPEC = {
+    schema: "neutral-spec/v0.1",
+    id: "stroop-color-word",
+    title: "Stroop Color-Word Test",
+    version: "0.1.0",
+    description: "Identify the ink color while ignoring the color word.",
+    language: "en-US",
+    tags: ["executive-function","inhibition","reaction-time"],
+    parameters: {
+      practice_repetitions: 1,
+      test_repetitions: 4,
+      fixation_duration: 500,
+      stimulus_duration: 2000,
+      inter_trial_interval: 500,
+      feedback_duration: 750,
+      minimum_practice_accuracy: 0.75,
+      maximum_practice_attempts: 2,
+      random_seed: null
+    },
+    requirements: {
+      input: ["keyboard","mouse","touch"],
+      color_vision: "required",
+      minimum_viewport: { width: 640, height: 480 },
+      fullscreen: "preferred"
+    },
+    colors: {
+      red:    { label:"Red",    value:"#D32F2F", response:"r" },
+      green:  { label:"Green",  value:"#2E7D32", response:"g" },
+      blue:   { label:"Blue",   value:"#1565C0", response:"b" },
+      yellow: { label:"Yellow", value:"#F9A825", response:"y" }
+    }
+  };
+
+  const COLOR_ORDER = ["red","green","blue","yellow"];
+  const RESPONSE_KEYS = COLOR_ORDER.map(n => SPEC.colors[n].response);
+  const RESPONSE_LABELS = COLOR_ORDER.map(n => SPEC.colors[n].label);
+
+  let practiceAttempt = 1;
+  let visibilityChanges = 0;
+  const qualityFlags = new Set();
+  const startedAt = new Date().toISOString();
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) visibilityChanges += 1;
+  });
+
+  function mean(values) {
+    const v = values.filter(Number.isFinite);
+    return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null;
+  }
+
+  function median(values) {
+    const v = values.filter(Number.isFinite).sort((a,b)=>a-b);
+    if (!v.length) return null;
+    const m = Math.floor(v.length/2);
+    return v.length % 2 ? v[m] : (v[m-1]+v[m])/2;
+  }
+
+  function shuffle(items) {
+    const a = [...items];
+    for (let i=a.length-1;i>0;i--) {
+      const j = Math.floor(Math.random()*(i+1));
+      [a[i],a[j]]=[a[j],a[i]];
+    }
+    return a;
+  }
+
+  function fullFactorial(repetitions) {
+    const rows = [];
+    for (let rep=0; rep<repetitions; rep++) {
+      for (const word of COLOR_ORDER) {
+        for (const ink of COLOR_ORDER) {
+          rows.push({
+            word,
+            ink,
+            correct_response: SPEC.colors[ink].response,
+            congruency: word === ink ? "congruent" : "incongruent"
+          });
+        }
+      }
+    }
+    return rows;
+  }
+
+  function constrainedShuffle(rows, phase) {
+    const immediateRepeat = (a,b) =>
+      !!a && !!b && (a.word===b.word || a.ink===b.ink || a.correct_response===b.correct_response);
+
+    const runTooLong = (out,candidate,maxRun=3) =>
+      out.length >= maxRun &&
+      out.slice(-maxRun).every(x => x.congruency === candidate.congruency);
+
+    for (let attempt=0; attempt<1000; attempt++) {
+      const pool = shuffle(rows);
+      const out = [];
+      let failed = false;
+
+      while (pool.length) {
+        const valid = [];
+        for (let i=0;i<pool.length;i++) {
+          const c = pool[i];
+          if (immediateRepeat(out[out.length-1],c)) continue;
+          if (phase==="test" && runTooLong(out,c,3)) continue;
+          valid.push(i);
+        }
+        if (!valid.length) { failed = true; break; }
+        const idx = valid[Math.floor(Math.random()*valid.length)];
+        out.push(pool.splice(idx,1)[0]);
+      }
+
+      if (!failed) return out;
+    }
+
+    qualityFlags.add("constrained_shuffle_fallback");
+    return shuffle(rows);
+  }
+
+  function fixationTrial() {
+    return {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: `<div class="stroop-wrap"><div class="stroop-stage"><div class="stroop-fixation">+</div></div><div class="stroop-response-bar"></div></div>`,
+      choices: "NO_KEYS",
+      trial_duration: SPEC.parameters.fixation_duration,
+      data: { neutral_component:"fixation" }
+    };
+  }
+
+  function installKeyboardButtonBridge() {
+    const handler = e => {
+      const idx = RESPONSE_KEYS.indexOf(e.key.toLowerCase());
+      if (idx < 0) return;
+      const buttons = document.querySelectorAll(".jspsych-btn");
+      if (buttons[idx]) {
+        e.preventDefault();
+        buttons[idx].click();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }
+
+  function responseTrial(row, phase) {
+    let removeListener = null;
+    return {
+      type: jsPsychHtmlButtonResponse,
+      stimulus: `
+        <div class="stroop-wrap">
+          <div class="stroop-stage">
+            <div class="stroop-word" style="color:${SPEC.colors[row.ink].value}">
+              ${SPEC.colors[row.word].label}
+            </div>
+          </div>
+          <div class="stroop-response-bar"></div>
+        </div>
+      `,
+      choices: RESPONSE_LABELS,
+      trial_duration: SPEC.parameters.stimulus_duration,
+      response_ends_trial: true,
+      on_load: () => {
+        const bar = document.querySelector(".stroop-response-bar");
+        const group = document.querySelector("#jspsych-html-button-response-btngroup");
+        if (bar && group) bar.appendChild(group);
+        removeListener = installKeyboardButtonBridge();
+      },
+      data: {
+        neutral_component:"stroop_trial",
+        phase,
+        practice_attempt: phase==="practice" ? practiceAttempt : null,
+        word: row.word,
+        ink: row.ink,
+        correct_response: row.correct_response,
+        congruency: row.congruency
+      },
+      on_finish: data => {
+        if (removeListener) removeListener();
+        const idx = data.response == null ? null : Number(data.response);
+        const value = idx == null ? null : RESPONSE_KEYS[idx];
+        data.response_value = value;
+        data.response_correct = value !== null && value === row.correct_response;
+        data.response_timed_out = value === null;
+        data.response_rt = data.response_timed_out ? null : data.rt;
+        data.response_timestamp = new Date().toISOString();
+        data.stimulus_requested_duration = SPEC.parameters.stimulus_duration;
+        data.document_visibility_changes = visibilityChanges;
+      }
+    };
+  }
+
+  function feedbackTrial() {
+    return {
+      type: jsPsychHtmlKeyboardResponse,
+      choices: "NO_KEYS",
+      trial_duration: SPEC.parameters.feedback_duration,
+      stimulus: () => {
+        const prev = jsPsych.data.get().last(1).values()[0];
+        let message = "Incorrect", color = "#B71C1C";
+        if (prev.response_timed_out) message = "Too slow";
+        else if (prev.response_correct) { message = "Correct"; color = "#1B5E20"; }
+        return `<div class="neutral-card"><div class="neutral-feedback" style="color:${color}">${message}</div></div>`;
+      },
+      data: { neutral_component:"practice_feedback" }
+    };
+  }
+
+  function itiTrial() {
+    return {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: `<div class="stroop-wrap"><div class="stroop-stage"></div><div class="stroop-response-bar"></div></div>`,
+      choices: "NO_KEYS",
+      trial_duration: SPEC.parameters.inter_trial_interval,
+      data: { neutral_component:"inter_trial_interval" }
+    };
+  }
+
+  function makeBlock(phase) {
+    const reps = phase==="practice" ? SPEC.parameters.practice_repetitions : SPEC.parameters.test_repetitions;
+    const rows = constrainedShuffle(fullFactorial(reps), phase);
+    const timeline = [];
+
+    for (const row of rows) {
+      timeline.push(fixationTrial());
+      timeline.push(responseTrial(row, phase));
+      if (phase==="practice") timeline.push(feedbackTrial());
+      timeline.push(itiTrial());
+    }
+    return timeline;
+  }
+
+  function downloadJSON(obj, filename) {
+    const blob = new Blob([JSON.stringify(obj,null,2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+
+  function buildNeutralResults() {
+    const rows = jsPsych.data.get().values().filter(r => r.neutral_component==="stroop_trial");
+
+    const trials = rows.map(r => ({
+      participant_id: null,
+      phase: r.phase,
+      block_index: r.phase==="practice" ? r.practice_attempt : 1,
+      trial_index: null,
+      word: r.word,
+      ink: r.ink,
+      correct_response: r.correct_response,
+      response: {
+        value: r.response_value,
+        correct: r.response_correct,
+        rt: r.response_rt,
+        timestamp: r.response_timestamp,
+        timed_out: r.response_timed_out
+      },
+      stimulus: {
+        requested_duration: r.stimulus_requested_duration
+      },
+      document: {
+        visibility_changes: r.document_visibility_changes
+      },
+      congruency: r.congruency
+    }));
+
+    const counters = {};
+    for (const t of trials) {
+      const key = t.phase==="practice" ? `practice-${t.block_index}` : "test";
+      counters[key] = (counters[key] || 0) + 1;
+      t.trial_index = counters[key];
+    }
+
+    const test = trials.filter(t=>t.phase==="test");
+    const responded = test.filter(t=>!t.response.timed_out);
+    const correct = test.filter(t=>t.response.correct);
+    const rtValid = t => !t.response.timed_out && Number.isFinite(t.response.rt) && t.response.rt >= 100;
+
+    const congruent = test.filter(t=>t.congruency==="congruent");
+    const incongruent = test.filter(t=>t.congruency==="incongruent");
+
+    const congruentAccuracy = congruent.length ? mean(congruent.map(t=>t.response.correct?1:0)) : null;
+    const incongruentAccuracy = incongruent.length ? mean(incongruent.map(t=>t.response.correct?1:0)) : null;
+
+    const congruentMedian = median(congruent.filter(t=>t.response.correct && rtValid(t)).map(t=>t.response.rt));
+    const incongruentMedian = median(incongruent.filter(t=>t.response.correct && rtValid(t)).map(t=>t.response.rt));
+
+    if (visibilityChanges > 0) qualityFlags.add("focus_changed");
+    if (window.innerWidth < SPEC.requirements.minimum_viewport.width || window.innerHeight < SPEC.requirements.minimum_viewport.height) {
+      qualityFlags.add("viewport_below_minimum");
+    }
+
+    return {
+      format:"neutral-results/v0.1",
+      metadata: {
+        assessment_id: SPEC.id,
+        assessment_title: SPEC.title,
+        assessment_version: SPEC.version,
+        started_at: startedAt,
+        completed_at: new Date().toISOString()
+      },
+      parameters: SPEC.parameters,
+      trials,
+      outputs: {
+        trial_count: test.length,
+        response_count: responded.length,
+        correct_count: correct.length,
+        accuracy: test.length ? correct.length/test.length : null,
+        omission_rate: test.length ? test.filter(t=>t.response.timed_out).length/test.length : null,
+        mean_correct_rt: mean(correct.filter(rtValid).map(t=>t.response.rt)),
+        median_correct_rt: median(correct.filter(rtValid).map(t=>t.response.rt)),
+        congruent_accuracy: congruentAccuracy,
+        incongruent_accuracy: incongruentAccuracy,
+        congruent_median_correct_rt: congruentMedian,
+        incongruent_median_correct_rt: incongruentMedian,
+        interference_rt: congruentMedian==null || incongruentMedian==null ? null : incongruentMedian-congruentMedian,
+        interference_accuracy: congruentAccuracy==null || incongruentAccuracy==null ? null : congruentAccuracy-incongruentAccuracy
+      },
+      quality: {
+        flags:[...qualityFlags],
+        document_visibility_changes: visibilityChanges,
+        viewport:{width:window.innerWidth,height:window.innerHeight}
+      },
+      provenance: {
+        implementation:"jspsych",
+        jspsych_version:"8.3.0",
+        source_schema:SPEC.schema,
+        user_agent:navigator.userAgent
+      }
+    };
+  }
+
+  const jsPsych = initJsPsych({
+    display_element:"jspsych-target",
+    case_sensitive_responses:false,
+    on_finish: () => {
+      const results = buildNeutralResults();
+      downloadJSON(results, `${SPEC.id}-neutral-results.json`);
+    }
+  });
+
+  const instructions = {
+    type: jsPsychHtmlButtonResponse,
+    stimulus: `
+      <div class="neutral-card">
+        <h1 class="neutral-title">Stroop Color-Word Test</h1>
+        <p class="neutral-copy">You will see a color word displayed in colored ink. Respond to the <strong>ink color</strong> and ignore the word itself.</p>
+        <div class="neutral-keys">
+          <div class="neutral-key"><kbd>R</kbd> Red</div>
+          <div class="neutral-key"><kbd>G</kbd> Green</div>
+          <div class="neutral-key"><kbd>B</kbd> Blue</div>
+          <div class="neutral-key"><kbd>Y</kbd> Yellow</div>
+        </div>
+        <p class="neutral-copy">Respond as quickly and accurately as you can. If you are unsure, make your best response before the stimulus disappears.</p>
+        <div class="neutral-meta">Keyboard, mouse, and touch are supported.</div>
+      </div>
+    `,
+    choices:["Begin practice"],
+    data:{neutral_component:"instructions"}
+  };
+
+  const practiceNode = {
+    timeline: makeBlock("practice"),
+    loop_function: data => {
+      const rows = data.values().filter(r=>r.neutral_component==="stroop_trial");
+      const acc = rows.length ? mean(rows.map(r=>r.response_correct?1:0)) : 0;
+
+      if (acc < SPEC.parameters.minimum_practice_accuracy && practiceAttempt < SPEC.parameters.maximum_practice_attempts) {
+        practiceAttempt += 1;
+        return true;
+      }
+
+      if (acc < SPEC.parameters.minimum_practice_accuracy) qualityFlags.add("practice_criterion_not_met");
+      return false;
+    }
+  };
+
+  const testIntro = {
+    type: jsPsychHtmlButtonResponse,
+    stimulus:`<div class="neutral-card"><h1 class="neutral-title">Practice complete</h1><p class="neutral-copy">The test will now begin. You will no longer receive correctness feedback.</p></div>`,
+    choices:["Begin test"],
+    data:{neutral_component:"test_intro"}
+  };
+
+  const completion = {
+    type: jsPsychHtmlButtonResponse,
+    stimulus:`<div class="neutral-card"><h1 class="neutral-title">Task complete</h1><p class="neutral-copy">Results will be exported as <strong>neutral-results/v0.1</strong>.</p></div>`,
+    choices:["Finish"],
+    data:{neutral_component:"completion"}
+  };
+
+  jsPsych.run([
+    instructions,
+    practiceNode,
+    testIntro,
+    ...makeBlock("test"),
+    completion
+  ]);
+})();
+</script>
+</body>
+</html>
