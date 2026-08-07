@@ -41,9 +41,13 @@ Keeping these contracts separate is useful because task execution and data analy
 
 The separation also makes reproducibility more explicit. A result can retain the assessment metadata, parameters, quality information, and provenance needed to understand how it was produced, while the corresponding spec documents the intended task behavior and scoring rules.
 
+---
+
 In short:
 
 **`neutral-spec` = portable description of what to run.**  
 **`neutral-results` = portable description of what came back.**
 
 The aim is not to claim that implementations are automatically psychometrically equivalent. Implementation details such as layout, timing, input device, screen size, and error handling can affect measurement and should be controlled when equivalence or normative interpretation matters.
+
+See [template.md]('template.md') and the `activities` folder for examples.
