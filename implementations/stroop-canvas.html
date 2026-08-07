@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Neutral Stroop Color-Word Test</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #111;
+      background: #f5f5f5;
+    }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+    }
+    body {
+      display: grid;
+      place-items: center;
+    }
+    .app {
+      width: min(1100px, 96vw);
+      height: min(760px, 94vh);
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 18px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.08);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 1fr auto;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: manipulation;
+    }
+    .controls {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      padding: 16px;
+      border-top: 1px solid #eee;
+      flex-wrap: wrap;
+    }
+    button {
+      min-width: 120px;
+      min-height: 48px;
+      padding: 10px 16px;
+      border-radius: 12px;
+      border: 1px solid #bbb;
+      background: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #f6f6f6; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <canvas id="stage" aria-label="Stroop task"></canvas>
+  <div id="controls" class="controls"></div>
+</div>
+
+<script>
+(() => {
+  // ---------------------------------------------------------------------------
+  // Neutral spec implementation: Stroop Color-Word Test
+  // schema: neutral-spec/v0.1
+  // return format: neutral-results/v0.1
+  // ---------------------------------------------------------------------------
+
+  const SPEC = {
+    id: "stroop-color-word",
+    title: "Stroop Color-Word Test",
+    version: "0.1.0",
+    parameters: {
+      practice_repetitions: 1,
+      test_repetitions: 4,
+      fixation_duration: 500,
+      stimulus_duration: 2000,
+      inter_trial_interval: 500,
+      feedback_duration: 750,
+      minimum_practice_accuracy: 0.75,
+      maximum_practice_attempts: 2,
+      random_seed: null
+    },
+    colors: {
+      red:    { label: "Red",    value: "#D32F2F", response: "r" },
+      green:  { label: "Green",  value: "#2E7D32", response: "g" },
+      blue:   { label: "Blue",   value: "#1565C0", response: "b" },
+      yellow: { label: "Yellow", value: "#F9A825", response: "y" }
+    }
+  };
+
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+  const controls = document.getElementById("controls");
+
+  const state = {
+    screen: "instructions",
+    phase: null,
+    trials: [],
+    quality: [],
+    visibilityChanges: 0,
+    practiceAttempt: 0,
+    currentBlock: [],
+    currentIndex: 0,
+    trialStartPerf: null,
+    responseOpen: false,
+    timeoutHandle: null,
+    stimulusRequestedOnset: null,
+    stimulusActualOnset: null,
+    stimulusRequestedDuration: null,
+    stimulusActualDuration: null,
+    currentTrial: null,
+    sessionId: crypto.randomUUID?.() || String(Date.now()),
+    participantId: null,
+    startedAt: new Date().toISOString()
+  };
+
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    render();
+  }
+
+  window.addEventListener("resize", resizeCanvas);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) state.visibilityChanges += 1;
+  });
+
+  function clear() {
+    const rect = canvas.getBoundingClientRect();
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, rect.width, rect.height);
+  }
+
+  function drawCenteredText(text, {
+    y = null,
+    size = 32,
+    weight = 600,
+    color = "#111",
+    maxWidth = 800,
+    lineHeight = 1.3
+  } = {}) {
+    const rect = canvas.getBoundingClientRect();
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `${weight} ${size}px system-ui, -apple-system, sans-serif`;
+
+    const words = String(text).split(/\s+/);
+    const lines = [];
+    let line = "";
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      if (ctx.measureText(test).width > maxWidth && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = test;
+      }
+    }
+    if (line) lines.push(line);
+
+    const startY = y ?? (rect.height / 2 - ((lines.length - 1) * size * lineHeight) / 2);
+    lines.forEach((ln, i) => {
+      ctx.fillText(ln, rect.width / 2, startY + i * size * lineHeight);
+    });
+  }
+
+  function setButtons(buttons) {
+    controls.innerHTML = "";
+    buttons.forEach(({label, onClick, key}) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.addEventListener("click", onClick);
+      if (key) b.dataset.key = key;
+      controls.appendChild(b);
+    });
+  }
+
+  function render() {
+    clear();
+
+    if (state.screen === "instructions") {
+      drawCenteredText("Stroop Color-Word Test", { y: 130, size: 38, weight: 700 });
+      drawCenteredText(
+        "You will see a color word displayed in colored ink. Respond to the ink color and ignore the word itself.",
+        { y: 240, size: 24, weight: 500, maxWidth: 780 }
+      );
+      drawCenteredText("R = Red    G = Green    B = Blue    Y = Yellow", {
+        y: 350, size: 24, weight: 700
+      });
+      drawCenteredText(
+        "Respond as quickly and accurately as you can. If you are unsure, make your best response before the stimulus disappears.",
+        { y: 430, size: 22, weight: 500, maxWidth: 780 }
+      );
+      setButtons([{ label: "Begin practice", onClick: beginPractice }]);
+    }
+
+    if (state.screen === "test_intro") {
+      drawCenteredText(
+        "Practice is complete. The test will now begin. You will no longer receive correctness feedback.",
+        { size: 28, maxWidth: 800 }
+      );
+      setButtons([{ label: "Begin test", onClick: beginTest }]);
+    }
+
+    if (state.screen === "fixation") {
+      drawCenteredText("+", { size: 48, weight: 500 });
+      setButtons([]);
+    }
+
+    if (state.screen === "stimulus" && state.currentTrial) {
+      const c = SPEC.colors[state.currentTrial.ink];
+      drawCenteredText(SPEC.colors[state.currentTrial.word].label, {
+        size: 64,
+        weight: 700,
+        color: c.value
+      });
+
+      setButtons(
+        Object.entries(SPEC.colors).map(([name, c]) => ({
+          label: c.label,
+          key: c.response,
+          onClick: () => submitResponse(c.response)
+        }))
+      );
+    }
+
+    if (state.screen === "feedback") {
+      setButtons([]);
+    }
+
+    if (state.screen === "blank") {
+      setButtons([]);
+    }
+
+    if (state.screen === "completion") {
+      drawCenteredText("The task is complete.", { y: 230, size: 34, weight: 700 });
+      drawCenteredText("Results are ready in neutral-results/v0.1 format.", {
+        y: 310, size: 22, weight: 500
+      });
+      setButtons([
+        { label: "Download results", onClick: downloadResults },
+        { label: "Restart", onClick: () => location.reload() }
+      ]);
+    }
+  }
+
+  function allConditions(repetitions) {
+    const names = Object.keys(SPEC.colors);
+    const rows = [];
+    for (let rep = 0; rep < repetitions; rep++) {
+      for (const word of names) {
+        for (const ink of names) {
+          rows.push({
+            word,
+            ink,
+            correct_response: SPEC.colors[ink].response,
+            congruency: word === ink ? "congruent" : "incongruent"
+          });
+        }
+      }
+    }
+    return rows;
+  }
+
+  function shuffle(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function violatesImmediateRepeat(a, b) {
+    if (!a || !b) return false;
+    return (
+      a.word === b.word ||
+      a.ink === b.ink ||
+      a.correct_response === b.correct_response
+    );
+  }
+
+  function violatesCongruencyRun(out, candidate, maxRun = 3) {
+    if (out.length < maxRun) return false;
+    const recent = out.slice(-maxRun);
+    return recent.every(x => x.congruency === candidate.congruency);
+  }
+
+  function constrainedShuffle(rows, phase) {
+    // Best-effort construction of the spec constraints.
+    for (let attempt = 0; attempt < 1000; attempt++) {
+      const pool = shuffle(rows);
+      const out = [];
+      let ok = true;
+
+      while (pool.length) {
+        const valid = [];
+        for (let i = 0; i < pool.length; i++) {
+          const c = pool[i];
+          const prev = out[out.length - 1];
+          if (violatesImmediateRepeat(prev, c)) continue;
+          if (phase === "test" && violatesCongruencyRun(out, c, 3)) continue;
+          valid.push(i);
+        }
+
+        if (!valid.length) {
+          ok = false;
+          break;
+        }
+
+        const chosenIndex = valid[Math.floor(Math.random() * valid.length)];
+        out.push(pool.splice(chosenIndex, 1)[0]);
+      }
+
+      if (ok) return out;
+    }
+
+    // Fallback: return a random order rather than fail the task.
+    state.quality.push("constrained_shuffle_fallback");
+    return shuffle(rows);
+  }
+
+  function beginPractice() {
+    state.practiceAttempt += 1;
+    state.phase = "practice";
+    state.currentBlock = constrainedShuffle(
+      allConditions(SPEC.parameters.practice_repetitions),
+      "practice"
+    );
+    state.currentIndex = 0;
+    startNextTrial();
+  }
+
+  function beginTest() {
+    state.phase = "test";
+    state.currentBlock = constrainedShuffle(
+      allConditions(SPEC.parameters.test_repetitions),
+      "test"
+    );
+    state.currentIndex = 0;
+    startNextTrial();
+  }
+
+  function startNextTrial() {
+    if (state.currentIndex >= state.currentBlock.length) {
+      endBlock();
+      return;
+    }
+
+    state.currentTrial = state.currentBlock[state.currentIndex];
+    state.screen = "fixation";
+    render();
+
+    setTimeout(() => showStimulus(), SPEC.parameters.fixation_duration);
+  }
+
+  function showStimulus() {
+    state.screen = "stimulus";
+    state.stimulusRequestedOnset = performance.now();
+    state.stimulusRequestedDuration = SPEC.parameters.stimulus_duration;
+    render();
+    state.stimulusActualOnset = performance.now();
+    state.trialStartPerf = state.stimulusActualOnset;
+    state.responseOpen = true;
+
+    clearTimeout(state.timeoutHandle);
+    state.timeoutHandle = setTimeout(
+      () => finishTrial(null, true),
+      SPEC.parameters.stimulus_duration
+    );
+  }
+
+  function submitResponse(value) {
+    if (!state.responseOpen) return;
+    if (!["r","g","b","y"].includes(value)) return;
+    finishTrial(value, false);
+  }
+
+  function finishTrial(value, timedOut) {
+    if (!state.responseOpen) return;
+    state.responseOpen = false;
+    clearTimeout(state.timeoutHandle);
+
+    const now = performance.now();
+    state.stimulusActualDuration = now - state.stimulusActualOnset;
+    const trial = state.currentTrial;
+    const rt = timedOut ? null : now - state.trialStartPerf;
+    const correct = timedOut ? false : value === trial.correct_response;
+
+    const record = {
+      session_id: state.sessionId,
+      participant_id: state.participantId,
+      phase: state.phase,
+      block_index: state.phase === "practice" ? state.practiceAttempt : 1,
+      trial_index: state.currentIndex + 1,
+      word: trial.word,
+      ink: trial.ink,
+      correct_response: trial.correct_response,
+      response: {
+        value,
+        correct,
+        rt,
+        timestamp: new Date().toISOString(),
+        timed_out: timedOut
+      },
+      stimulus: {
+        requested_onset: state.stimulusRequestedOnset,
+        actual_onset: state.stimulusActualOnset,
+        requested_duration: state.stimulusRequestedDuration,
+        actual_duration: state.stimulusActualDuration
+      },
+      document: {
+        visibility_changes: state.visibilityChanges
+      },
+      congruency: trial.congruency
+    };
+
+    state.trials.push(record);
+
+    if (state.phase === "practice") {
+      state.screen = "feedback";
+      clear();
+      const message = timedOut ? "Too slow" : correct ? "Correct" : "Incorrect";
+      const color = correct ? "#1B5E20" : "#B71C1C";
+      drawCenteredText(message, { size: 42, weight: 700, color });
+      setButtons([]);
+
+      setTimeout(() => interTrial(), SPEC.parameters.feedback_duration);
+    } else {
+      interTrial();
+    }
+  }
+
+  function interTrial() {
+    state.screen = "blank";
+    render();
+    setTimeout(() => {
+      state.currentIndex += 1;
+      startNextTrial();
+    }, SPEC.parameters.inter_trial_interval);
+  }
+
+  function endBlock() {
+    if (state.phase === "practice") {
+      const rows = state.trials.filter(
+        t => t.phase === "practice" && t.block_index === state.practiceAttempt
+      );
+      const accuracy = rows.reduce((s,t) => s + (t.response.correct ? 1 : 0), 0) / rows.length;
+      const retry =
+        accuracy < SPEC.parameters.minimum_practice_accuracy &&
+        state.practiceAttempt < SPEC.parameters.maximum_practice_attempts;
+
+      if (retry) {
+        beginPractice();
+      } else {
+        if (accuracy < SPEC.parameters.minimum_practice_accuracy) {
+          state.quality.push("practice_criterion_not_met");
+        }
+        state.screen = "test_intro";
+        render();
+      }
+    } else {
+      state.screen = "completion";
+      render();
+    }
+  }
+
+  function median(values) {
+    const v = values.filter(Number.isFinite).sort((a,b)=>a-b);
+    if (!v.length) return null;
+    const m = Math.floor(v.length / 2);
+    return v.length % 2 ? v[m] : (v[m-1] + v[m]) / 2;
+  }
+
+  function mean(values) {
+    const v = values.filter(x => typeof x === "number" && Number.isFinite(x));
+    return v.length ? v.reduce((a,b)=>a+b,0) / v.length : null;
+  }
+
+  function buildResults() {
+    const pop = state.trials.filter(t => t.phase === "test");
+    const responded = pop.filter(t => !t.response.timed_out);
+    const correct = pop.filter(t => t.response.correct);
+    const rtValid = t =>
+      !t.response.timed_out &&
+      typeof t.response.rt === "number" &&
+      t.response.rt >= 100;
+
+    const congruent = pop.filter(t => t.congruency === "congruent");
+    const incongruent = pop.filter(t => t.congruency === "incongruent");
+    const congruentCorrectRT = congruent.filter(t => t.response.correct && rtValid(t)).map(t => t.response.rt);
+    const incongruentCorrectRT = incongruent.filter(t => t.response.correct && rtValid(t)).map(t => t.response.rt);
+
+    const congruentMedian = median(congruentCorrectRT);
+    const incongruentMedian = median(incongruentCorrectRT);
+    const congruentAccuracy = congruent.length ? mean(congruent.map(t => t.response.correct ? 1 : 0)) : null;
+    const incongruentAccuracy = incongruent.length ? mean(incongruent.map(t => t.response.correct ? 1 : 0)) : null;
+
+    return {
+      format: "neutral-results/v0.1",
+      metadata: {
+        assessment_id: SPEC.id,
+        assessment_title: SPEC.title,
+        assessment_version: SPEC.version,
+        session_id: state.sessionId,
+        participant_id: state.participantId,
+        started_at: state.startedAt,
+        completed_at: new Date().toISOString()
+      },
+      parameters: SPEC.parameters,
+      trials: state.trials,
+      outputs: {
+        trial_count: pop.length,
+        response_count: responded.length,
+        correct_count: correct.length,
+        accuracy: pop.length ? correct.length / pop.length : null,
+        omission_rate: pop.length ? pop.filter(t=>t.response.timed_out).length / pop.length : null,
+        mean_correct_rt: mean(correct.filter(rtValid).map(t => t.response.rt)),
+        median_correct_rt: median(correct.filter(rtValid).map(t => t.response.rt)),
+        congruent_accuracy: congruentAccuracy,
+        incongruent_accuracy: incongruentAccuracy,
+        congruent_median_correct_rt: congruentMedian,
+        incongruent_median_correct_rt: incongruentMedian,
+        interference_rt:
+          congruentMedian == null || incongruentMedian == null
+            ? null
+            : incongruentMedian - congruentMedian,
+        interference_accuracy:
+          congruentAccuracy == null || incongruentAccuracy == null
+            ? null
+            : congruentAccuracy - incongruentAccuracy
+      },
+      quality: {
+        flags: [...new Set(state.quality)],
+        document_visibility_changes: state.visibilityChanges,
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight
+        }
+      },
+      provenance: {
+        implementation: "standalone-html-canvas",
+        source_schema: "neutral-spec/v0.1",
+        user_agent: navigator.userAgent
+      }
+    };
+  }
+
+  function downloadResults() {
+    const results = buildResults();
+    const blob = new Blob([JSON.stringify(results, null, 2)], {
+      type: "application/json"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${SPEC.id}-results.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  window.addEventListener("keydown", e => {
+    const key = e.key.toLowerCase();
+
+    if (state.screen === "instructions" && e.code === "Space") {
+      e.preventDefault();
+      beginPractice();
+      return;
+    }
+
+    if (state.screen === "test_intro" && e.code === "Space") {
+      e.preventDefault();
+      beginTest();
+      return;
+    }
+
+    if (state.screen === "stimulus" && ["r","g","b","y"].includes(key)) {
+      submitResponse(key);
+    }
+  });
+
+  resizeCanvas();
+})();
+</script>
+</body>
+</html>
