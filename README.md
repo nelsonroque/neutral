@@ -50,4 +50,4 @@ In short:
 
 The aim is not to claim that implementations are automatically psychometrically equivalent. Implementation details such as layout, timing, input device, screen size, and error handling can affect measurement and should be controlled when equivalence or normative interpretation matters.
 
-See [template.md]('template.md') and the `activities` folder for examples.
+See [template.md](template.md) and the [`activities`](activities/) folder for examples.
