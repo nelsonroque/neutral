@@ -39,7 +39,7 @@ parameters:
     required: false
 
 requirements:
-  input: keyboard
+  input: keyboard,mouse,touch
   color_vision: required
   minimum_viewport: { width: 640px, height: 480px }
   fullscreen: preferred
