@@ -237,6 +237,6 @@ quality:
       code: time_limit_reached
 
 return:
-  format: neurotask-results/v0.1
+  format: neutral-results/v0.1
   include: [metadata, parameters, events, outputs, quality, provenance]
 ```

@@ -216,6 +216,6 @@ outputs:
   interference_accuracy: "$congruent_accuracy - $incongruent_accuracy"
 
 return:
-  format: neurotask-results/v0.1
+  format: neutral-results/v0.1
   include: [metadata, parameters, trials, outputs, quality, provenance]
 ```
