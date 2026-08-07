@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Neutral Trail Making Test, Part B</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #111;
+      background: #f5f5f5;
+    }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+    }
+    body {
+      display: grid;
+      place-items: center;
+    }
+    .app {
+      width: min(1200px, 98vw);
+      height: min(820px, 96vh);
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 18px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.08);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 1fr auto;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
+      cursor: crosshair;
+    }
+    .controls {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      padding: 16px;
+      border-top: 1px solid #eee;
+      flex-wrap: wrap;
+    }
+    button {
+      min-width: 140px;
+      min-height: 48px;
+      padding: 10px 16px;
+      border-radius: 12px;
+      border: 1px solid #bbb;
+      background: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #f6f6f6; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <canvas id="stage" aria-label="Trail Making Test Part B"></canvas>
+  <div id="controls" class="controls"></div>
+</div>
+
+<script>
+(() => {
+  const SPEC = {
+    id: "trail-making-b-digital",
+    title: "Trail Making Test, Part B — Digital Adaptation",
+    version: "0.1.0",
+    parameters: {
+      practice_time_limit: 60000,
+      test_time_limit: 300000,
+      node_diameter: 0.065,
+      hit_slop: 0.012,
+      path_width: 0.006,
+      incorrect_feedback_duration: 350,
+      require_fullscreen: true
+    },
+    practice_nodes: [
+      { id: "p1", label: "1", sequence: 1, x: 0.12, y: 0.72 },
+      { id: "pA", label: "A", sequence: 2, x: 0.32, y: 0.25 },
+      { id: "p2", label: "2", sequence: 3, x: 0.53, y: 0.68 },
+      { id: "pB", label: "B", sequence: 4, x: 0.73, y: 0.24 },
+      { id: "p3", label: "3", sequence: 5, x: 0.88, y: 0.70 }
+    ],
+    test_nodes: [
+      { id: "n1",  label: "1",  sequence: 1,  x: 0.08, y: 0.78 },
+      { id: "A",   label: "A",  sequence: 2,  x: 0.18, y: 0.19 },
+      { id: "n2",  label: "2",  sequence: 3,  x: 0.31, y: 0.69 },
+      { id: "B",   label: "B",  sequence: 4,  x: 0.47, y: 0.13 },
+      { id: "n3",  label: "3",  sequence: 5,  x: 0.64, y: 0.66 },
+      { id: "C",   label: "C",  sequence: 6,  x: 0.86, y: 0.22 },
+      { id: "n4",  label: "4",  sequence: 7,  x: 0.76, y: 0.83 },
+      { id: "D",   label: "D",  sequence: 8,  x: 0.55, y: 0.43 },
+      { id: "n5",  label: "5",  sequence: 9,  x: 0.91, y: 0.55 },
+      { id: "E",   label: "E",  sequence: 10, x: 0.68, y: 0.08 },
+      { id: "n6",  label: "6",  sequence: 11, x: 0.39, y: 0.34 },
+      { id: "F",   label: "F",  sequence: 12, x: 0.13, y: 0.48 },
+      { id: "n7",  label: "7",  sequence: 13, x: 0.36, y: 0.88 },
+      { id: "G",   label: "G",  sequence: 14, x: 0.59, y: 0.91 },
+      { id: "n8",  label: "8",  sequence: 15, x: 0.24, y: 0.56 },
+      { id: "H",   label: "H",  sequence: 16, x: 0.82, y: 0.41 },
+      { id: "n9",  label: "9",  sequence: 17, x: 0.49, y: 0.76 },
+      { id: "I",   label: "I",  sequence: 18, x: 0.07, y: 0.30 },
+      { id: "n10", label: "10", sequence: 19, x: 0.72, y: 0.56 },
+      { id: "J",   label: "J",  sequence: 20, x: 0.28, y: 0.10 },
+      { id: "n11", label: "11", sequence: 21, x: 0.89, y: 0.73 },
+      { id: "K",   label: "K",  sequence: 22, x: 0.43, y: 0.57 },
+      { id: "n12", label: "12", sequence: 23, x: 0.17, y: 0.88 },
+      { id: "L",   label: "L",  sequence: 24, x: 0.62, y: 0.26 },
+      { id: "n13", label: "13", sequence: 25, x: 0.92, y: 0.09 }
+    ]
+  };
+
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+  const controls = document.getElementById("controls");
+
+  const state = {
+    screen: "instructions",
+    phase: null,
+    nodes: [],
+    lastCorrectSequence: 0,
+    correctPath: [],
+    events: [],
+    errors: [],
+    correctSelections: [],
+    pointerSamples: [],
+    pointerActive: false,
+    currentPointer: null,
+    sceneActualOnset: null,
+    stopTimestamp: null,
+    finalCorrectTimestamp: null,
+    timedOut: false,
+    completed: false,
+    timeoutHandle: null,
+    visibilityChanges: 0,
+    sessionId: crypto.randomUUID?.() || String(Date.now()),
+    participantId: null,
+    startedAt: new Date().toISOString(),
+    flashedNodeId: null,
+    practiceResults: null,
+    testResults: null
+  };
+
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    render();
+  }
+  window.addEventListener("resize", resizeCanvas);
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) state.visibilityChanges += 1;
+  });
+
+  function setButtons(buttons) {
+    controls.innerHTML = "";
+    for (const {label, onClick} of buttons) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.addEventListener("click", onClick);
+      controls.appendChild(b);
+    }
+  }
+
+  function clear() {
+    const rect = canvas.getBoundingClientRect();
+    ctx.clearRect(0,0,rect.width,rect.height);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0,0,rect.width,rect.height);
+  }
+
+  function drawCenteredText(text, {y=null,size=30,weight=600,color="#111",maxWidth=850,lineHeight=1.35}={}) {
+    const rect = canvas.getBoundingClientRect();
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `${weight} ${size}px system-ui, -apple-system, sans-serif`;
+
+    const words = String(text).split(/\s+/);
+    const lines = [];
+    let line = "";
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      if (ctx.measureText(test).width > maxWidth && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = test;
+      }
+    }
+    if (line) lines.push(line);
+
+    const startY = y ?? rect.height/2 - ((lines.length-1)*size*lineHeight)/2;
+    lines.forEach((ln,i) => {
+      ctx.fillText(ln, rect.width/2, startY + i*size*lineHeight);
+    });
+  }
+
+  function nodePixel(node) {
+    const r = canvas.getBoundingClientRect();
+    return { x: node.x * r.width, y: node.y * r.height };
+  }
+
+  function nodeRadius() {
+    const r = canvas.getBoundingClientRect();
+    return Math.min(r.width, r.height) * SPEC.parameters.node_diameter / 2;
+  }
+
+  function hitRadius() {
+    const r = canvas.getBoundingClientRect();
+    return nodeRadius() + Math.min(r.width, r.height) * SPEC.parameters.hit_slop;
+  }
+
+  function pathWidth() {
+    const r = canvas.getBoundingClientRect();
+    return Math.max(2, Math.min(r.width, r.height) * SPEC.parameters.path_width);
+  }
+
+  function render() {
+    clear();
+
+    if (state.screen === "instructions") {
+      drawCenteredText("Trail Making Test, Part B", { y: 120, size: 38, weight: 700 });
+      drawCenteredText(
+        "On the screen are circles containing numbers and letters. Connect them in alternating order: 1 → A → 2 → B → 3 → C, and so on.",
+        { y: 245, size: 24, weight: 500, maxWidth: 900 }
+      );
+      drawCenteredText(
+        "Begin at 1 and continue until the final number. Work as quickly as you can without making mistakes. If you select the wrong circle, it will be marked as an error. Correct the mistake and continue; the timer will keep running.",
+        { y: 390, size: 22, weight: 500, maxWidth: 900 }
+      );
+      setButtons([{ label: "Begin practice", onClick: () => beginScene("practice") }]);
+      return;
+    }
+
+    if (state.screen === "practice_complete") {
+      drawCenteredText(
+        "Practice is complete. Remember to alternate numbers and letters.",
+        { size: 28, maxWidth: 850 }
+      );
+      setButtons([{ label: "Begin test", onClick: () => beginScene("test") }]);
+      return;
+    }
+
+    if (state.screen === "completion") {
+      drawCenteredText("The task is complete.", { y: 230, size: 34, weight: 700 });
+      drawCenteredText(
+        "Results are ready in neutral-results/v0.1 format.",
+        { y: 310, size: 22, weight: 500 }
+      );
+      setButtons([
+        { label: "Download results", onClick: downloadResults },
+        { label: "Restart", onClick: () => location.reload() }
+      ]);
+      return;
+    }
+
+    if (state.screen === "scene") {
+      drawScene();
+      setButtons([]);
+    }
+  }
+
+  function drawScene() {
+    const r = canvas.getBoundingClientRect();
+
+    // Correct retained path.
+    if (state.correctPath.length > 1) {
+      ctx.beginPath();
+      const first = nodePixel(state.correctPath[0]);
+      ctx.moveTo(first.x, first.y);
+      for (let i = 1; i < state.correctPath.length; i++) {
+        const p = nodePixel(state.correctPath[i]);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.strokeStyle = "#1565C0";
+      ctx.lineWidth = pathWidth();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.stroke();
+    }
+
+    // Live pointer segment from last correct node to current pointer.
+    if (state.pointerActive && state.correctPath.length && state.currentPointer) {
+      const from = nodePixel(state.correctPath[state.correctPath.length - 1]);
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(state.currentPointer.x, state.currentPointer.y);
+      ctx.strokeStyle = "#1565C0";
+      ctx.lineWidth = pathWidth();
+      ctx.lineCap = "round";
+      ctx.stroke();
+    }
+
+    const radius = nodeRadius();
+
+    for (const node of state.nodes) {
+      const p = nodePixel(node);
+      const completed = node.sequence <= state.lastCorrectSequence;
+      const flashed = node.id === state.flashedNodeId;
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+      ctx.lineWidth = flashed ? 4 : 2;
+      ctx.strokeStyle = flashed ? "#B71C1C" : completed ? "#1565C0" : "#111";
+      ctx.stroke();
+
+      ctx.fillStyle = "#111";
+      ctx.font = `600 ${Math.max(18, Math.min(32, r.width * 0.022))}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(node.label, p.x, p.y);
+
+      if (node.sequence === 1) {
+        ctx.font = "600 14px system-ui";
+        ctx.fillStyle = "#555";
+        ctx.fillText("Begin", p.x, p.y + radius + 18);
+      }
+
+      if (node.sequence === Math.max(...state.nodes.map(n => n.sequence))) {
+        ctx.font = "600 14px system-ui";
+        ctx.fillStyle = "#555";
+        ctx.fillText("End", p.x, p.y + radius + 18);
+      }
+    }
+
+    // Lightweight timer display.
+    if (state.sceneActualOnset && !state.stopTimestamp) {
+      const elapsed = performance.now() - state.sceneActualOnset;
+      ctx.textAlign = "right";
+      ctx.textBaseline = "top";
+      ctx.font = "500 16px system-ui";
+      ctx.fillStyle = "#666";
+      ctx.fillText(`${(elapsed/1000).toFixed(1)} s`, r.width - 18, 14);
+    }
+  }
+
+  function resetScene(phase) {
+    clearTimeout(state.timeoutHandle);
+    state.phase = phase;
+    state.nodes = phase === "practice" ? SPEC.practice_nodes : SPEC.test_nodes;
+    state.lastCorrectSequence = 0;
+    state.correctPath = [];
+    state.events = [];
+    state.errors = [];
+    state.correctSelections = [];
+    state.pointerSamples = [];
+    state.pointerActive = false;
+    state.currentPointer = null;
+    state.sceneActualOnset = null;
+    state.stopTimestamp = null;
+    state.finalCorrectTimestamp = null;
+    state.timedOut = false;
+    state.completed = false;
+    state.flashedNodeId = null;
+  }
+
+  async function maybeFullscreen() {
+    if (!SPEC.parameters.require_fullscreen) return;
+    if (document.fullscreenElement) return;
+    try {
+      await document.documentElement.requestFullscreen();
+    } catch (_) {
+      // Browser may reject fullscreen; quality is still captured by viewport/focus.
+    }
+  }
+
+  async function beginScene(phase) {
+    await maybeFullscreen();
+    resetScene(phase);
+    state.screen = "scene";
+    render();
+
+    state.sceneActualOnset = performance.now();
+
+    state.events.push({
+      type: "lifecycle",
+      scene_actual_onset: state.sceneActualOnset,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight
+      },
+      device_pixel_ratio: window.devicePixelRatio || 1
+    });
+
+    const limit = phase === "practice"
+      ? SPEC.parameters.practice_time_limit
+      : SPEC.parameters.test_time_limit;
+
+    state.timeoutHandle = setTimeout(() => timeoutScene(), limit);
+    requestAnimationFrame(tick);
+  }
+
+  function tick() {
+    if (state.screen === "scene" && !state.stopTimestamp) {
+      render();
+      requestAnimationFrame(tick);
+    }
+  }
+
+  function canvasPoint(evt) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: evt.clientX - rect.left,
+      y: evt.clientY - rect.top,
+      nx: (evt.clientX - rect.left) / rect.width,
+      ny: (evt.clientY - rect.top) / rect.height
+    };
+  }
+
+  function closestHit(point) {
+    let best = null;
+    let bestD = Infinity;
+    const hr = hitRadius();
+
+    for (const node of state.nodes) {
+      const p = nodePixel(node);
+      const d = Math.hypot(point.x - p.x, point.y - p.y);
+      if (d <= hr && d < bestD) {
+        best = node;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  function recordPointerSample(evt, point) {
+    const sample = {
+      type: "pointer_sample",
+      timestamp: performance.now(),
+      x: point.nx,
+      y: point.ny,
+      pressure: evt.pressure ?? null,
+      pointer_type: evt.pointerType || "unknown"
+    };
+    state.pointerSamples.push(sample);
+    state.events.push(sample);
+  }
+
+  canvas.addEventListener("pointerdown", evt => {
+    if (state.screen !== "scene" || state.stopTimestamp) return;
+    canvas.setPointerCapture?.(evt.pointerId);
+
+    const p = canvasPoint(evt);
+    state.pointerActive = true;
+    state.currentPointer = { x: p.x, y: p.y };
+    recordPointerSample(evt, p);
+
+    const node = closestHit(p);
+    if (node) handleSelection(node, p);
+  });
+
+  canvas.addEventListener("pointermove", evt => {
+    if (state.screen !== "scene" || !state.pointerActive || state.stopTimestamp) return;
+    const p = canvasPoint(evt);
+    state.currentPointer = { x: p.x, y: p.y };
+    recordPointerSample(evt, p);
+  });
+
+  canvas.addEventListener("pointerup", evt => {
+    if (state.screen !== "scene") return;
+    const p = canvasPoint(evt);
+    recordPointerSample(evt, p);
+    state.pointerActive = false;
+    state.currentPointer = null;
+    render();
+  });
+
+  canvas.addEventListener("pointercancel", () => {
+    state.pointerActive = false;
+    state.currentPointer = null;
+    render();
+  });
+
+  function handleSelection(node, point) {
+    const expectedSeq = state.lastCorrectSequence + 1;
+    const correct = node.sequence === expectedSeq;
+    const now = performance.now();
+    const elapsed = now - state.sceneActualOnset;
+    const expectedNode = state.nodes.find(n => n.sequence === expectedSeq);
+
+    const event = {
+      type: "node_selection",
+      timestamp: now,
+      selected: {
+        id: node.id,
+        label: node.label,
+        sequence: node.sequence
+      },
+      expected: {
+        id: expectedNode?.id ?? null,
+        sequence: expectedSeq
+      },
+      correct,
+      elapsed_time: elapsed,
+      x: point.nx,
+      y: point.ny
+    };
+
+    state.events.push(event);
+
+    if (correct) {
+      const previous = state.correctSelections[state.correctSelections.length - 1];
+      const latency = previous ? now - previous.timestamp : now - state.sceneActualOnset;
+
+      const correctRecord = {
+        ...event,
+        inter_node_latency: latency
+      };
+
+      state.correctSelections.push(correctRecord);
+      state.lastCorrectSequence = node.sequence;
+      state.correctPath.push(node);
+
+      // Mark any previously missed expected node as corrected.
+      for (const err of state.errors) {
+        if (!err.corrected && err.expected?.id === node.id) {
+          err.corrected = true;
+        }
+      }
+
+      const maxSeq = Math.max(...state.nodes.map(n => n.sequence));
+      if (state.lastCorrectSequence === maxSeq) {
+        completeScene(now);
+      }
+    } else {
+      const err = {
+        type: "error",
+        timestamp: now,
+        selected: { id: node.id },
+        expected: { id: expectedNode?.id ?? null },
+        elapsed_time: elapsed,
+        corrected: false
+      };
+      state.errors.push(err);
+      state.events.push(err);
+
+      state.flashedNodeId = node.id;
+      render();
+      setTimeout(() => {
+        if (state.flashedNodeId === node.id) {
+          state.flashedNodeId = null;
+          render();
+        }
+      }, SPEC.parameters.incorrect_feedback_duration);
+    }
+  }
+
+  function completeScene(timestamp) {
+    if (state.stopTimestamp) return;
+    clearTimeout(state.timeoutHandle);
+    state.completed = true;
+    state.finalCorrectTimestamp = timestamp;
+    state.stopTimestamp = timestamp;
+    finishScene();
+  }
+
+  function timeoutScene() {
+    if (state.stopTimestamp) return;
+    state.timedOut = true;
+    state.stopTimestamp = performance.now();
+    finishScene();
+  }
+
+  function totalPointerDistancePx() {
+    let sum = 0;
+    for (let i = 1; i < state.pointerSamples.length; i++) {
+      const a = state.pointerSamples[i - 1];
+      const b = state.pointerSamples[i];
+      const r = canvas.getBoundingClientRect();
+      const ax = a.x * r.width, ay = a.y * r.height;
+      const bx = b.x * r.width, by = b.y * r.height;
+      sum += Math.hypot(bx - ax, by - ay);
+    }
+    return sum;
+  }
+
+  function idealPathDistancePx() {
+    let sum = 0;
+    for (let i = 1; i < state.nodes.length; i++) {
+      const a = nodePixel(state.nodes[i - 1]);
+      const b = nodePixel(state.nodes[i]);
+      sum += Math.hypot(b.x - a.x, b.y - a.y);
+    }
+    return sum;
+  }
+
+  function summarizeCurrentScene() {
+    const completionTime = state.completed
+      ? state.finalCorrectTimestamp - state.sceneActualOnset
+      : null;
+
+    const elapsedAtStop = state.stopTimestamp - state.sceneActualOnset;
+    const pathDistance = totalPointerDistancePx();
+    const idealDistance = idealPathDistancePx();
+
+    return {
+      phase: state.phase,
+      scene_actual_onset: state.sceneActualOnset,
+      stop_timestamp: state.stopTimestamp,
+      completed: state.completed,
+      timed_out: state.timedOut,
+      completion_time: completionTime,
+      elapsed_time_at_stop: elapsedAtStop,
+      events: [...state.events],
+      errors: [...state.errors],
+      correct_selections: [...state.correctSelections],
+      outputs: {
+        completed: state.completed,
+        timed_out: state.timedOut,
+        completion_time: completionTime,
+        elapsed_time_at_stop: elapsedAtStop,
+        error_count: state.errors.length,
+        corrected_error_count: new Set(
+          state.errors.filter(e => e.corrected).map(e => e.expected?.id).filter(Boolean)
+        ).size,
+        correct_selection_count: state.correctSelections.length,
+        total_selection_count: state.events.filter(e => e.type === "node_selection").length,
+        mean_inter_node_latency: state.correctSelections.length
+          ? state.correctSelections.reduce((s,e) => s + e.inter_node_latency, 0) / state.correctSelections.length
+          : null,
+        path_distance: pathDistance,
+        ideal_path_distance: idealDistance,
+        path_efficiency: pathDistance > 0 ? idealDistance / pathDistance : null
+      }
+    };
+  }
+
+  function finishScene() {
+    const summary = summarizeCurrentScene();
+
+    if (state.phase === "practice") {
+      state.practiceResults = summary;
+      state.screen = "practice_complete";
+      render();
+    } else {
+      state.testResults = summary;
+      state.screen = "completion";
+      render();
+    }
+  }
+
+  function buildResults() {
+    const test = state.testResults || summarizeCurrentScene();
+    const flags = [];
+
+    if (state.visibilityChanges > 0) flags.push("focus_changed");
+    if (window.innerWidth < 900 || window.innerHeight < 600) {
+      flags.push("viewport_below_minimum");
+    }
+    if (test.timed_out) flags.push("time_limit_reached");
+
+    return {
+      format: "neutral-results/v0.1",
+      metadata: {
+        assessment_id: SPEC.id,
+        assessment_title: SPEC.title,
+        assessment_version: SPEC.version,
+        session_id: state.sessionId,
+        participant_id: state.participantId,
+        started_at: state.startedAt,
+        completed_at: new Date().toISOString()
+      },
+      parameters: SPEC.parameters,
+      events: test.events,
+      outputs: test.outputs,
+      quality: {
+        flags,
+        document_visibility_changes: state.visibilityChanges,
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight
+        },
+        device_pixel_ratio: window.devicePixelRatio || 1
+      },
+      provenance: {
+        implementation: "standalone-html-canvas",
+        source_schema: "neutral-spec/v0.1",
+        user_agent: navigator.userAgent
+      }
+    };
+  }
+
+  function downloadResults() {
+    const results = buildResults();
+    const blob = new Blob([JSON.stringify(results, null, 2)], {
+      type: "application/json"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${SPEC.id}-results.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  resizeCanvas();
+})();
+</script>
+</body>
+</html>
